@@ -1,0 +1,21 @@
+[package]
+name = "docker-fuse-filter"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "=1.0"
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["std"] }
+globset = "0.4.9"
+futures = "0.3"
+tokio = { version = "1.38", features = ["full"] }
+fuser = "=0.18"
+libc = "0.2"
+nix = "0.28"
+
+[dev-dependencies]
+tempfile = "3.9"
