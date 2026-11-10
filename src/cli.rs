@@ -58,17 +58,15 @@ pub async fn healthcheck(mountpoint: PathBuf) -> Result<()> {
 }
 
 pub async fn validate(config: PathBuf) -> Result<()> {
-    let config_str = std::fs::read_to_string(&config)
-        .context("Failed to read config file")?;
-    let _config: crate::config::Config = serde_yaml::from_str(&config_str)
-        .context("Failed to parse config YAML")?;
+    let config_str = std::fs::read_to_string(&config).context("Failed to read config file")?;
+    let _config: crate::config::Config =
+        serde_yaml::from_str(&config_str).context("Failed to parse config YAML")?;
     info!("Configuration validated successfully");
     Ok(())
 }
 
 pub async fn config_show(config: PathBuf) -> Result<()> {
-    let config_str = std::fs::read_to_string(&config)
-        .context("Failed to read config file")?;
+    let config_str = std::fs::read_to_string(&config).context("Failed to read config file")?;
     println!("{}", config_str);
     Ok(())
 }

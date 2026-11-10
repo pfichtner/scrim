@@ -12,17 +12,22 @@ impl Filter {
         let mut builder = GlobSetBuilder::new();
 
         for pattern in patterns {
-            let glob = if pattern.ends_with('/') {
-                // Directory pattern - match recursively
-                Glob::new(&pattern)?
+            if let Some(dir) = pattern.strip_suffix('/') {
+                // Directory pattern: hide the directory itself and everything below it.
+                if !dir.is_empty() {
+                    builder.add(Glob::new(dir)?);
+                    builder.add(Glob::new(&format!("{dir}/**"))?);
+                }
             } else {
-                Glob::new(&pattern)?
-            };
-            builder.add(glob);
+                builder.add(Glob::new(&pattern)?);
+            }
         }
 
         let globset = builder.build()?;
-        Ok(Self { globset, case_sensitive })
+        Ok(Self {
+            globset,
+            case_sensitive,
+        })
     }
 
     pub fn is_excluded(&self, path: &Path) -> bool {

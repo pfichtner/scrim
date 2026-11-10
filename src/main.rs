@@ -6,8 +6,8 @@ mod cli;
 mod config;
 mod filesystem;
 mod filter;
-mod mount;
 mod health;
+mod mount;
 
 #[derive(Parser)]
 #[command(name = "fuse-filter")]
@@ -58,7 +58,11 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Mount { source, mountpoint, config } => {
+        Commands::Mount {
+            source,
+            mountpoint,
+            config,
+        } => {
             cli::mount(source, mountpoint, config).await?;
         }
         Commands::Healthcheck { mountpoint } => {

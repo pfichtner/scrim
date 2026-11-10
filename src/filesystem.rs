@@ -50,7 +50,8 @@ pub struct FuserFile {
 impl FuserFile {
     pub fn new() -> Self {
         Self {
-            fd: std::fs::File::open(&std::path::Path::new("/")).unwrap_or_else(|_| std::fs::File::open(&std::path::Path::new("/")).unwrap()),
+            fd: std::fs::File::open(&std::path::Path::new("/"))
+                .unwrap_or_else(|_| std::fs::File::open(&std::path::Path::new("/")).unwrap()),
         }
     }
 }

@@ -9,7 +9,11 @@ pub async fn mount(ctx: MountContext) -> anyhow::Result<()> {
     // TODO: Implement FUSE mount logic using fuser crate
     // This will be implemented in later milestones
 
-    tracing::info!("Mount context: source={:?} mountpoint={:?}", ctx.source, ctx.mountpoint);
+    tracing::info!(
+        "Mount context: source={:?} mountpoint={:?}",
+        ctx.source,
+        ctx.mountpoint
+    );
     Ok(())
 }
 
