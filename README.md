@@ -6,11 +6,11 @@ configured files and directories such as `.env`, private keys, and `.git/`,
 while keeping normal read/write behavior and write-through to the original
 directory.
 
-> **Status: pre-release, M1 complete.**
-> The FUSE passthrough filesystem and CLI mount lifecycle work on the host, and
-> exclusion patterns are enforced on filesystem operations. Docker image/Compose
-> integration and the full security test suite are still under implementation.
-> Do not rely on Scrim to protect real secrets yet.
+> **Status: pre-release, M4 complete.**
+> The FUSE passthrough filesystem, exclusion enforcement, write-through, and the
+> Docker image/Compose integration (with mount propagation) work end to end. The
+> automated security test suite and failure watchdog are still under
+> implementation. Do not rely on Scrim to protect real secrets yet.
 
 ## Why
 
@@ -79,7 +79,7 @@ was verified in Phase 0; see [`scripts/phase0-feasibility.sh`](scripts/phase0-fe
 | FUSE passthrough filesystem | Implemented (M1), manually verified |
 | Exclusion enforcement in all operations | Implemented (M2), integration tests pending |
 | Write-through read/write support | Implemented (M3), integration tests pending |
-| Dockerfile and Docker Compose example | Planned (M4) |
+| Docker image and Docker Compose example | Implemented (M4), e2e tested on native Linux |
 | Security tests, failure watchdog, benchmarks | Planned (M5) |
 
 See [`implementation-state.md`](implementation-state.md) for details.
@@ -211,6 +211,78 @@ and writes operate directly on the source directory, so a change made through
 the filtered mount is immediately visible on the host and no synchronization
 process is involved. Read-only mode rejects writes with `EROFS`.
 
+## Docker Compose example
+
+The working example lives in [`examples/basic/`](examples/basic/) and keeps all
+privileges confined to the scrim service. The application container gets a
+plain bind mount of the filtered view.
+
+```bash
+cd examples/basic
+
+# 1. Prepare the host-side shared mountpoint (as root)
+sudo ../../scripts/setup-mounts.sh
+
+# 2. Start the stack
+docker compose up -d
+
+# 3. Use the filtered view
+docker compose exec application ls -la /workspace
+docker compose exec application cat /workspace/.env   # -> No such file or directory
+
+# 4. Stop and clean up
+docker compose down
+sudo ../../scripts/cleanup-mounts.sh
+```
+
+Only the scrim service receives `SYS_ADMIN`, `/dev/fuse`, and
+`apparmor:unconfined`. The application service is health-gated on scrim and
+receives no capabilities. Scrim runs as root inside its container because
+mounting requires `CAP_SYS_ADMIN`; that container is the deliberately
+privileged, single-purpose component of the stack.
+
+Requires a rootful Docker Engine on native Linux. Docker Desktop / VM-based
+daemons resolve bind-mount sources in a different mount namespace and are not
+supported.
+
+Run the end-to-end verification used during development:
+
+```bash
+sudo ./scripts/integration-test.sh
+```
+
+## Running scrim directly on the host
+
+Docker is the supported deployment model, but the same binary can run
+directly on the host. Because scrim then mounts in the host mount namespace
+itself, the propagation setup (`setup-mounts.sh`, `rshared` binds,
+`apparmor:unconfined`) is not needed at all -- the application container can
+bind-mount the mountpoint directory directly:
+
+```bash
+cargo build --locked --release
+sudo mkdir -p ./filtered/target
+sudo target/release/scrim mount --source "$PWD/project" \
+  --mountpoint "$PWD/filtered/target" --config ./config.yaml
+docker run -v "$PWD/filtered/target:/workspace" -w /workspace python:3 sleep infinity
+```
+
+For a portable binary that runs on any Linux x86_64 host regardless of
+installed libraries, build the static musl target:
+`cargo build --release --target x86_64-unknown-linux-musl`.
+
+Trade-offs versus the containerized model:
+
+- A host binary is a privileged daemon with the whole host filesystem in
+  reach; the scrim container is confined (it only sees `/source` and
+  `/filtered`, under Docker's default seccomp profile) and dies with the
+  stack. This is the main reason Docker is the primary model.
+- Lifecycle is manual: start/stop scrim yourself (or write a systemd unit
+  with `Restart=on-failure` around `scrim mount`), and unmount with
+  `scrim unmount` before removing directories.
+- The fail-safe property is identical: if scrim dies, the mountpoint returns
+  I/O errors instead of falling back to the source.
+
 ## Known limitations
 
 - Extended attributes (`getxattr`, `setxattr`, `listxattr`) are not forwarded.
@@ -218,9 +290,15 @@ process is involved. Read-only mode rejects writes with `EROFS`.
 - `hide_excluded_files: false` is treated as `true`.
 - Mounting requires root or `CAP_SYS_ADMIN`; unprivileged mounting needs
   `fusermount3`, which is not used by default here.
+- The FUSE mount is only accessible to the user that mounted it (root):
+  application containers must currently run as root, and host access to the
+  filtered mount requires root. `allow_other` is not enabled yet.
 - `statfs` reports the source filesystem's statistics, so reported free space
   includes space that is not writable through the filter policy.
 - `logging.level` is parsed but not applied yet; logs use the default level.
+- After an unclean shutdown, the host mountpoint may linger in
+  `Transport endpoint is not connected` state; re-running `setup-mounts.sh`
+  clears it before the next start.
 
 ## Security model
 
@@ -245,44 +323,6 @@ Scrim does **not** protect against:
 Application containers must never receive a bind mount of the original source
 and must not need `SYS_ADMIN`, `/dev/fuse`, or privileged mode.
 
-## Docker Compose (planned)
-
-The target Compose layout keeps privileges confined to the filter container:
-
-```yaml
-services:
-  scrim:
-    cap_add:
-      - SYS_ADMIN
-    devices:
-      - /dev/fuse:/dev/fuse
-    security_opt:
-      - apparmor:unconfined
-    volumes:
-      - type: bind
-        source: ./project
-        target: /source
-      - type: bind
-        source: ./filtered
-        target: /filtered
-        bind:
-          propagation: rshared
-
-  application:
-      depends_on:
-        scrim:
-        condition: service_healthy
-    volumes:
-      - type: bind
-        source: ./filtered/target
-        target: /workspace
-        bind:
-          propagation: rslave
-```
-
-The Dockerfile, Compose file, health check, and host mount setup/cleanup
-scripts are not present yet; they arrive in M4.
-
 ## Troubleshooting
 
 **`mount` fails with `EPERM` even with `SYS_ADMIN`.** On Ubuntu, the default
@@ -306,9 +346,21 @@ application container is created.
 stops.** This is the intended fail-safe behavior: the application must not fall
 back to the original source.
 
+**`scrim` refuses to start with `mountpoint is already mounted` after a
+previous run.** A dead FUSE mount lingered on the host. Run
+`sudo ../../scripts/setup-mounts.sh` again (it clears stale mounts), or
+`sudo ../../scripts/cleanup-mounts.sh` to tear everything down.
+
 ### Cleanup
 
-If a Phase 0 run is interrupted, unmount before removing directories:
+If a run is interrupted, unmount before removing directories:
+
+```bash
+docker compose down
+sudo ../../scripts/cleanup-mounts.sh
+```
+
+For a Phase 0 run interrupted before cleanup existed:
 
 ```bash
 sudo umount -l /tmp/scrim-phase0/filtered/target
@@ -320,11 +372,15 @@ rm -rf /tmp/scrim-phase0
 
 ```
 Cargo.toml
+Dockerfile            multi-stage build: rust:1-slim-bookworm -> debian:bookworm-slim
 src/                  CLI, config, filter, filesystem, mount, health
 scripts/
-  phase0-feasibility.sh
+  phase0-feasibility.sh   propagation proof of concept
+  setup-mounts.sh         prepare the host-side rshared mountpoint
+  cleanup-mounts.sh       unmount FUSE before removing mount directories
+  integration-test.sh     end-to-end Compose verification (AC-001..AC-014)
+examples/basic/        working Compose example: sample project + config + compose.yaml
 tests/                integration and security tests (planned)
-examples/             example projects (planned)
 config/               example configuration
 .github/workflows/    CI
 ```

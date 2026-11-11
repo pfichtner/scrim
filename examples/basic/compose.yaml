@@ -1,0 +1,58 @@
+# Scrim example: a filtered, writable project directory for an application
+# container. The application gets a plain bind mount -- no capabilities, no
+# /dev/fuse. Only the scrim service is privileged.
+#
+# Prerequisite, run as root from this directory before starting the stack:
+#   sudo ../../scripts/setup-mounts.sh
+#
+# After use:
+#   docker compose down
+#   sudo ../../scripts/cleanup-mounts.sh
+services:
+  scrim:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: scrim:latest
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse:/dev/fuse
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      - ./project:/source
+      - ./config.yaml:/etc/scrim/config.yaml:ro
+      - type: bind
+        source: ./filtered
+        target: /filtered
+        bind:
+          propagation: rshared
+    command:
+      - mount
+      - --source
+      - /source
+      - --mountpoint
+      - /filtered/target
+      - --config
+      - /etc/scrim/config.yaml
+    healthcheck:
+      test: ["CMD", "scrim", "healthcheck", "--mountpoint", "/filtered/target"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+      start_period: 5s
+
+  application:
+    image: python:3
+    depends_on:
+      scrim:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ./filtered/target
+        target: /workspace
+        bind:
+          propagation: rslave
+    working_dir: /workspace
+    command: sleep infinity

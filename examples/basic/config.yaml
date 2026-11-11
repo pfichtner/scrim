@@ -1,0 +1,20 @@
+filesystem:
+  source: /source
+  mountpoint: /filtered/target
+  read_only: false
+  allow_symlinks: false
+  preserve_permissions: true
+
+filter:
+  patterns:
+    - ".env"
+    - ".env.*"
+    - "*.pem"
+    - "*.key"
+    - ".git/"
+    - "**/secrets/**"
+  case_sensitive: true
+  hide_excluded_files: true
+
+logging:
+  level: info
