@@ -6,9 +6,6 @@ configured files and directories such as `.env`, private keys, and `.git/`,
 while keeping normal read/write behavior and write-through to the original
 directory.
 
-Scrim is the project name. The Cargo package and binary still use their
-original names, `docker-fuse-filter` and `fuse-filter`.
-
 > **Status: pre-release, M1 complete.**
 > The FUSE passthrough filesystem and CLI mount lifecycle work on the host, and
 > exclusion patterns are enforced on filesystem operations. Docker image/Compose
@@ -132,27 +129,27 @@ The intended interface:
 
 ```bash
 # Start the filesystem
-fuse-filter mount \
+scrim mount \
   --source /source \
   --mountpoint /filtered/target \
-  --config /etc/fuse-filter/config.yaml
+  --config /etc/scrim/config.yaml
 
 # Check filesystem health
-fuse-filter healthcheck --mountpoint /filtered/target
+scrim healthcheck --mountpoint /filtered/target
 
 # Validate configuration
-fuse-filter validate --config /etc/fuse-filter/config.yaml
+scrim validate --config /etc/scrim/config.yaml
 
 # Display active configuration
-fuse-filter config show --config /etc/fuse-filter/config.yaml
+scrim config show --config /etc/scrim/config.yaml
 
 # Unmount filesystem
-fuse-filter unmount --mountpoint /filtered/target
+scrim unmount --mountpoint /filtered/target
 ```
 
 Exit codes are `0` success, `1` general error, `2` invalid configuration,
 `3` source unavailable, `4` mount failure, and `5` filesystem unhealthy.
-`--config` defaults to `/etc/fuse-filter/config.yaml` for `mount`, `validate`,
+`--config` defaults to `/etc/scrim/config.yaml` for `mount`, `validate`,
 and `config show`.
 
 ## Configuration
@@ -254,7 +251,7 @@ The target Compose layout keeps privileges confined to the filter container:
 
 ```yaml
 services:
-  fuse-filter:
+  scrim:
     cap_add:
       - SYS_ADMIN
     devices:
@@ -272,8 +269,8 @@ services:
           propagation: rshared
 
   application:
-    depends_on:
-      fuse-filter:
+      depends_on:
+        scrim:
         condition: service_healthy
     volumes:
       - type: bind
@@ -314,9 +311,9 @@ back to the original source.
 If a Phase 0 run is interrupted, unmount before removing directories:
 
 ```bash
-sudo umount -l /tmp/docker-fuse-filter-phase0/filtered/target
-sudo umount -l /tmp/docker-fuse-filter-phase0/filtered
-rm -rf /tmp/docker-fuse-filter-phase0
+sudo umount -l /tmp/scrim-phase0/filtered/target
+sudo umount -l /tmp/scrim-phase0/filtered
+rm -rf /tmp/scrim-phase0
 ```
 
 ## Project layout

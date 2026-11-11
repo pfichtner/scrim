@@ -4,10 +4,10 @@ use crate::config::Config;
 use crate::errors::{AppError, Result};
 use crate::filter::Filter;
 
-const DEFAULT_CONFIG: &str = "/etc/fuse-filter/config.yaml";
+const DEFAULT_CONFIG: &str = "/etc/scrim/config.yaml";
 
 #[derive(Debug, clap::Parser)]
-#[command(name = "fuse-filter")]
+#[command(name = "scrim")]
 #[command(about = "Scrim - writable, filtered FUSE bind mounts")]
 pub struct Cli {
     #[command(subcommand)]
@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn config_show_subcommand_parses() {
         let cli = <Cli as clap::Parser>::try_parse_from([
-            "fuse-filter",
+            "scrim",
             "config",
             "show",
             "--config",

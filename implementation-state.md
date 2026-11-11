@@ -1,4 +1,4 @@
-# docker-fuse-filter Implementation State
+# Scrim Implementation State
 
 ## Current Status (Tue Nov 10 2026)
 
@@ -12,7 +12,7 @@
 ## Project Structure (per PRD §12)
 
 ```
-docker-fuse-filter/
+scrim/
 ├── Cargo.toml
 ├── Cargo.lock
 ├── Dockerfile      ← to create
@@ -91,14 +91,14 @@ The PoC uses `bindfs` inside a container as a minimal FUSE stand-in (filtering i
 
 **Verified manually:**
 ```bash
-sudo target/debug/docker-fuse-filter mount --source /tmp/scrim-src \
+sudo target/debug/scrim mount --source /tmp/scrim-src \
   --mountpoint /tmp/scrim-mnt --config /tmp/scrim.yaml
 ls /tmp/scrim-mnt                       # source contents, excluded entries omitted
 cat /tmp/scrim-mnt/hello.txt            # works
 cat /tmp/scrim-mnt/.env                 # ENOENT
 echo hi > /tmp/scrim-mnt/new.txt        # appears in source immediately
-sudo target/debug/docker-fuse-filter healthcheck --mountpoint /tmp/scrim-mnt
-sudo target/debug/docker-fuse-filter unmount --mountpoint /tmp/scrim-mnt
+sudo target/debug/scrim healthcheck --mountpoint /tmp/scrim-mnt
+sudo target/debug/scrim unmount --mountpoint /tmp/scrim-mnt
 ```
 
 **Remaining:** an automated FUSE integration test that does not require CI to
@@ -165,9 +165,9 @@ have root and `/dev/fuse` (currently ignored by CI; host verification manual).
   - `scripts/setup-mounts.sh`: create shared mount `rshared`
   - `scripts/cleanup-mounts.sh`: safe unmount then `rprivate`
 - docker-compose.yml (per PRD §5.1):
-  - `fuse-filter` service: `cap_add: SYS_ADMIN`, `devices: /dev/fuse`, `security_opt: apparmor:unconfined`
+  - `scrim` service: `cap_add: SYS_ADMIN`, `devices: /dev/fuse`, `security_opt: apparmor:unconfined`
   - Volumes: `./project:/source`, `./filtered:/filtered` (rshared)
-  - `application` service: `depends_on: fuse-filter (service_healthy)`, volume `./filtered/target:/workspace` (rslave)
+  - `application` service: `depends_on: scrim (service_healthy)`, volume `./filtered/target:/workspace` (rslave)
 - Healthcheck integration
 - E2E test on native Linux: `./scripts/setup-mounts.sh && docker compose up -d`
 
@@ -245,7 +245,7 @@ have root and `/dev/fuse` (currently ignored by CI; host verification manual).
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
-cd /workspace/docker-fuse-filter
+cd /workspace/scrim
 cargo fmt --all
 cargo clippy --locked --all-targets
 cargo test --locked
@@ -255,10 +255,10 @@ Host mount smoke test (requires root and `/dev/fuse`):
 
 ```bash
 mkdir -p /tmp/scrim-src /tmp/scrim-mnt
-sudo target/debug/docker-fuse-filter mount --source /tmp/scrim-src \
+sudo target/debug/scrim mount --source /tmp/scrim-src \
   --mountpoint /tmp/scrim-mnt --config config/config.example.yaml
-sudo target/debug/docker-fuse-filter healthcheck --mountpoint /tmp/scrim-mnt
-sudo target/debug/docker-fuse-filter unmount --mountpoint /tmp/scrim-mnt
+sudo target/debug/scrim healthcheck --mountpoint /tmp/scrim-mnt
+sudo target/debug/scrim unmount --mountpoint /tmp/scrim-mnt
 ```
 
 Next: add automated integration/security tests (M2/M5), then the Dockerfile,

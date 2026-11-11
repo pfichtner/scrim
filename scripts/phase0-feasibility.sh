@@ -12,9 +12,9 @@
 # Requirements: native Linux host, rootful Docker Engine, run as root.
 set -euo pipefail
 
-BASE="${PHASE0_DIR:-/tmp/docker-fuse-filter-phase0}"
-FUSE_CT=dff-phase0-fuse
-APP_CT=dff-phase0-app
+BASE="${PHASE0_DIR:-/tmp/scrim-phase0}"
+FUSE_CT=scrim-phase0-fuse
+APP_CT=scrim-phase0-app
 
 log() { printf '\n=== %s ===\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
