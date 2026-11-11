@@ -1,16 +1,70 @@
 # Scrim
 
-Writable, filtered bind mounts for Docker containers. Scrim exposes a host
-directory to application containers through a FUSE filesystem that hides
-configured files and directories such as `.env`, private keys, and `.git/`,
-while keeping normal read/write behavior and write-through to the original
-directory.
+A filtered, writable filesystem for sandboxed applications and AI coding agents.
 
-> **Status: pre-release, M4 complete.**
-> The FUSE passthrough filesystem, exclusion enforcement, write-through, and the
-> Docker image/Compose integration (with mount propagation) work end to end. The
-> automated security test suite and failure watchdog are still under
-> implementation. Do not rely on Scrim to protect real secrets yet.
+Scrim exposes a host directory through a FUSE filesystem that enforces configurable file and directory exclusions.
+
+Applications can read, create, modify, and delete permitted files while excluded paths remain inaccessible.
+
+Scrim supports Docker-based deployment and can also run directly on a Linux host.
+
+Use Scrim to:
+- Give AI coding agents access to source code without exposing .env files or credentials.
+- Run untrusted development tools against real project directories.
+- Restrict filesystem visibility for build systems and CI/CD jobs.
+- Provide writable project access without exposing sensitive files.
+Scrim supports Docker-based deployment and can also run directly on a Linux host.
+
+## AI coding agents
+
+AI coding agents often need broad access to a project directory.
+
+They need to inspect source code, modify files, run tests, install
+dependencies, and execute development tools. However, they generally
+don't need access to deployment credentials, API keys, private SSH
+keys, or other sensitive files stored alongside the source code.
+
+Scrim provides a filtered filesystem view that lets an agent work
+with the project while excluding explicitly configured paths.
+
+For example:
+```
+project/                  /workspace/
+├── src/                  ├── src/
+├── tests/                ├── tests/
+├── package.json          ├── package.json
+├── README.md             └── README.md
+├── .env
+├── .env.production
+├── .git/
+├── secrets/
+└── deploy.key
+```
+
+The coding agent receives access to `/workspace`, not the original
+project directory.
+
+Attempts to access excluded files directly return `ENOENT`.
+
+Example configuration:
+
+```
+filter:
+  patterns:
+    - ".env"
+    - ".env.*"
+    - ".git/"
+    - "*.key"
+    - "*.pem"
+    - "**/secrets/**"
+```
+
+The agent retains normal write access to permitted files. Changes
+are immediately reflected in the original project directory.
+
+Scrim does not provide a complete security sandbox. Network access,
+process isolation, resource limits, and other attack surfaces must
+be controlled separately.
 
 ## Why
 
