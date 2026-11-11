@@ -1,47 +1,67 @@
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct Filter {
     globset: GlobSet,
-    case_sensitive: bool,
 }
 
 impl Filter {
     pub fn new(patterns: Vec<String>, case_sensitive: bool) -> anyhow::Result<Self> {
-        let mut builder = GlobSetBuilder::new();
+        let mut expanded = Vec::new();
 
         for pattern in patterns {
-            if let Some(dir) = pattern.strip_suffix('/') {
-                // Directory pattern: hide the directory itself and everything below it.
-                if !dir.is_empty() {
-                    builder.add(Glob::new(dir)?);
-                    builder.add(Glob::new(&format!("{dir}/**"))?);
+            let raw = pattern.trim();
+            if raw.is_empty() {
+                continue;
+            }
+
+            let (pattern, is_dir) = match raw.strip_suffix('/') {
+                Some(dir) => (dir, true),
+                None => (raw, false),
+            };
+            if pattern.is_empty() {
+                continue;
+            }
+
+            if pattern.contains('/') {
+                expanded.push(pattern.to_string());
+                if is_dir {
+                    expanded.push(format!("{pattern}/**"));
+                }
+                // Also match the pattern relative to the source root.
+                if let Some(rest) = pattern.strip_prefix("**/") {
+                    expanded.push(rest.to_string());
                 }
             } else {
-                builder.add(Glob::new(&pattern)?);
+                // A bare name matches at the root and at any depth.
+                expanded.push(pattern.to_string());
+                expanded.push(format!("**/{pattern}"));
+                if is_dir {
+                    expanded.push(format!("{pattern}/**"));
+                    expanded.push(format!("**/{pattern}/**"));
+                }
             }
         }
 
-        let globset = builder.build()?;
+        let mut builder = GlobSetBuilder::new();
+        for pattern in expanded {
+            let glob = GlobBuilder::new(&pattern)
+                .case_insensitive(!case_sensitive)
+                .build()?;
+            builder.add(glob);
+        }
+
         Ok(Self {
-            globset,
-            case_sensitive,
+            globset: builder.build()?,
         })
     }
 
     pub fn is_excluded(&self, path: &Path) -> bool {
-        if self.case_sensitive {
-            self.globset.is_match(path)
-        } else {
-            // Convert to lowercase path for case-insensitive matching
-            let path_str = path.to_string_lossy().to_lowercase();
-            self.globset.is_match(&path_str)
-        }
+        self.globset.is_match(path)
     }
 
     pub fn is_parent_excluded(&self, path: &Path) -> bool {
-        // Check if any parent directory is excluded
         let mut current = Some(path);
         while let Some(p) = current {
             if self.is_excluded(p) {
@@ -76,6 +96,7 @@ mod tests {
     #[test]
     fn test_directory_exclusion() {
         let filter = Filter::new(vec![".git/".to_string()], true).unwrap();
+        assert!(filter.is_excluded(Path::new(".git")));
         assert!(filter.is_excluded(Path::new(".git/config")));
         assert!(filter.is_excluded(Path::new(".git/objects/file")));
         assert!(!filter.is_excluded(Path::new("app.py")));
@@ -86,6 +107,35 @@ mod tests {
         let filter = Filter::new(vec!["**/secrets/**".to_string()], true).unwrap();
         assert!(filter.is_excluded(Path::new("config/secrets/credentials.json")));
         assert!(filter.is_excluded(Path::new("app/secrets/key.pem")));
+        assert!(filter.is_excluded(Path::new("secrets/key.pem")));
         assert!(!filter.is_excluded(Path::new("config/database.json")));
+    }
+
+    #[test]
+    fn test_bare_pattern_matches_at_any_depth() {
+        let filter = Filter::new(vec![".env".to_string()], true).unwrap();
+        assert!(filter.is_excluded(Path::new(".env")));
+        assert!(filter.is_excluded(Path::new("config/.env")));
+        assert!(filter.is_excluded(Path::new("a/b/.env")));
+    }
+
+    #[test]
+    fn test_nested_directory_pattern() {
+        let filter = Filter::new(vec![".git/".to_string()], true).unwrap();
+        assert!(filter.is_excluded(Path::new("vendor/repo/.git/config")));
+        assert!(filter.is_parent_excluded(Path::new("vendor/repo/.git/objects/x")));
+    }
+
+    #[test]
+    fn test_case_insensitive() {
+        let filter = Filter::new(vec![".env".to_string()], false).unwrap();
+        assert!(filter.is_excluded(Path::new(".ENV")));
+        assert!(filter.is_excluded(Path::new("config/.Env")));
+    }
+
+    #[test]
+    fn test_empty_patterns_hide_nothing() {
+        let filter = Filter::new(Vec::new(), true).unwrap();
+        assert!(!filter.is_excluded(Path::new(".env")));
     }
 }

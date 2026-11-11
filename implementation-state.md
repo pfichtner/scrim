@@ -3,8 +3,9 @@
 ## Current Status (Tue Nov 10 2026)
 
 - **Phase 0 (Feasibility):** ✅ COMPLETE — FUSE → host → application mount propagation verified on native Linux Docker Engine with `scripts/phase0-feasibility.sh`. The containerized architecture is viable; no host-side supervisor fallback is needed.
-- **Phase 1-4 (Rust implementation):** READY TO CONTINUE — project skeleton compiles cleanly with `cargo check` (0 errors).
-- **Dependencies:** Installed fuse3, libfuse3-dev, Rust 1.99.1
+- **M1 (Rust FUSE passthrough):** ✅ COMPLETE — inode-based passthrough implemented with `fuser` 0.18 and manually verified on the host (mount, read, write-through, mkdir/rename/delete, read-only mode, unmount, healthcheck).
+- **M2/M3 implementation:** Largely landed — exclusion rules enforced in all filesystem operations, path traversal and symlink escapes rejected, write-through works. Integration/security test suite still pending.
+- **Dependencies:** Rust 1.99.1; `fuser` 0.18 (pure Rust, no libfuse needed). `cargo test --locked` passes 18 unit tests; fmt/clippy clean.
 
 ---
 
@@ -16,18 +17,18 @@ docker-fuse-filter/
 ├── Cargo.lock
 ├── Dockerfile      ← to create
 ├── docker-compose.yml   ← to create
-├── README.md       ← to create
+├── README.md       ✅ docs
 ├── config/
-│   └── config.example.yaml   ← to create
+│   └── config.example.yaml   ✅
 ├── src/
-│   ├── main.rs         ✅ compiled OK
-│   ├── cli.rs          ✅ compiled OK
-│   ├── config.rs       ✅ compiled OK
-│   ├── filter.rs       ✅ compiled OK (globset pattern matching)
-│   ├── filesystem.rs   ✅ compiled OK (passthrough stub)
-│   ├── mount.rs        ✅ compiled OK (FUSE lifecycle stubs)
-│   ├── health.rs       ✅ compiled OK (health check result types)
-│   ├── errors.rs       ← to create
+│   ├── main.rs         ✅
+│   ├── cli.rs          ✅
+│   ├── config.rs       ✅
+│   ├── filter.rs       ✅
+│   ├── filesystem.rs   ✅ inode-based FUSE passthrough
+│   ├── mount.rs        ✅ mount/unmount/is_mounted via fuser + /proc/self/mountinfo
+│   ├── health.rs       ✅ health check result types + mount check
+│   ├── errors.rs       ✅ exit codes and AppError
 │   ├── fs/
 │   │   ├── lookup.rs
 │   │   ├── readdir.rs
@@ -76,23 +77,32 @@ The PoC uses `bindfs` inside a container as a minimal FUSE stand-in (filtering i
 
 ---
 
-## Milestone 1: Rust FUSE Passthrough Filesystem (M1) — IN PROGRESS
+## Milestone 1: Rust FUSE Passthrough Filesystem (M1) — ✅ COMPLETE
 
 **Goal:** Basic FUSE mount that forwards all operations to source directory on the host.
 
 **Completed:**
-- ✅ Project skeleton created
-- ✅ `cargo check` passes (0 errors)
-- ✅ Core modules: `main.rs`, `cli.rs`, `config.rs`, `filter.rs`, `filesystem.rs`, `mount.rs`, `health.rs`
+- ✅ Inode-based path map and per-handle file descriptor map (no full-file copies)
+- ✅ Ops: `lookup`, `readdir`, `getattr`, `setattr` (truncate/chmod/chown/utimens), `open`, `read`, `write`, `create`, `mkdir`, `unlink`, `rmdir`, `rename`, `link`, `symlink`, `readlink`, `flush`, `fsync`, `release`, `access`, `statfs`
+- ✅ CLI: `mount`, `healthcheck`, `validate`, `config show`, `unmount` with exit codes 0–5
+- ✅ Health check verifies the mount via `/proc/self/mountinfo` plus a directory read
+- ✅ Read-only mode returns `EROFS` for writes
+- ✅ 18 unit tests + manual host mount verification (`ls`, read, write-through, mkdir/rename/delete, hidden files, symlink hiding, healthcheck, unmount)
 
-**Pending from M1:**
-- Implement FUSE passthrough using `fuser` crate 0.18
-- All required ops: `lookup`, `readdir`, `getattr`, `open`, `read`, `write`, `create`, `mkdir`, `unlink`, `rmdir`, `rename`, `truncate`, `chmod`, `chown`, `utimens`, `statfs`
-- CLI: `mount`, `healthcheck`, `validate`, `config show`, `unmount` subcommands with exit codes (0–5 per PRD §9)
-- Health check: verify mountpoint is active FUSE mount
-- Unit tests: mount temp dir, verify basic read/write/ls, unmount cleanup
+**Verified manually:**
+```bash
+sudo target/debug/docker-fuse-filter mount --source /tmp/scrim-src \
+  --mountpoint /tmp/scrim-mnt --config /tmp/scrim.yaml
+ls /tmp/scrim-mnt                       # source contents, excluded entries omitted
+cat /tmp/scrim-mnt/hello.txt            # works
+cat /tmp/scrim-mnt/.env                 # ENOENT
+echo hi > /tmp/scrim-mnt/new.txt        # appears in source immediately
+sudo target/debug/docker-fuse-filter healthcheck --mountpoint /tmp/scrim-mnt
+sudo target/debug/docker-fuse-filter unmount --mountpoint /tmp/scrim-mnt
+```
 
-**Deliverable (M1):** `cargo run -- mount --source /tmp/src --mountpoint /tmp/mnt` works on host; `ls /tmp/mnt` shows source contents.
+**Remaining:** an automated FUSE integration test that does not require CI to
+have root and `/dev/fuse` (currently ignored by CI; host verification manual).
 
 ---
 
@@ -100,31 +110,21 @@ The PoC uses `bindfs` inside a container as a minimal FUSE stand-in (filtering i
 
 **Goal:** Hide files matching patterns in all filesystem operations.
 
-**Completed so far:**
-- ✅ `filter.rs`: `GlobSet`-based pattern matching with `case_sensitive` option
+**Completed:**
+- ✅ `filter.rs`: `GlobSet`-based pattern matching with case sensitivity
 - ✅ Pattern support: `.env`, `.env.*`, `*.pem`, `*.key`, `.git/`, `**/secrets/**`
-- ✅ Unit tests in `filter.rs`: basic exclusion, wildcard, directory recursive
+- ✅ Bare names match at any depth; directory patterns hide descendants
+- ✅ Filtering enforced in every operation: `lookup`, `getattr`, `readdir`, `open`, `read`/`write`, `create`/`mkdir`, `unlink`/`rmdir`, `rename`, `link`, `symlink`
+- ✅ Path security: `..`/absolute names rejected, symlinks hidden unless `allow_symlinks`, symlink targets must canonicalize inside source and be visible
+- ✅ Config validation, source/mountpoint checks, exit codes 0–5
+- ✅ Unit tests for filter matching, path sanitation, visibility, inode mapping
 
 **Pending from M2:**
-- Enforce filtering in EVERY FUSE operation (PRD §4.2 table):
-  - `lookup` → reject excluded paths (ENOENT)
-  - `readdir` → omit excluded entries
-  - `getattr` → reject excluded paths (ENOENT)
-  - `open` → reject excluded files (ENOENT)
-  - `read`/`write` → forward only if `open` succeeded
-  - `create`/`mkdir` → allow only if parent visible AND new name not excluded
-  - `unlink`/`rmdir` → allow only if target visible
-  - `rename` → enforce filtering on BOTH source and destination
-- Path resolution security (PRD §6.2):
-  - Reject `..` traversals and absolute-path escapes
-  - Reject symlinks escaping source tree or pointing to excluded targets
-  - Explicit design + test for hard-link behavior
-- Config validation at startup (PRD §8.2):
-  - Source directory must exist
-  - Mountpoint must not already be mounted
-  - Config YAML validation
-  - Environment-variable overrides
-- Exit code support per PRD §9
+- Automated FUSE integration/security tests for each operation (PRD §11.1–11.2)
+- Hard-link policy test (hard links to excluded paths cannot be created through the mount; a pre-existing hard link is treated as a normal visible path)
+- Environment-variable overrides
+- `hide_excluded_files: false` behavior (currently always hides)
+- Case-insensitive and nested-pattern end-to-end tests
 
 **Security-critical:** All ops must enforce exclusion rules — `readdir` filtering alone is insufficient (PRD §6.1).
 
@@ -136,16 +136,20 @@ The PoC uses `bindfs` inside a container as a minimal FUSE stand-in (filtering i
 
 **Goal:** Complete read/write semantics with write-through to source.
 
+**Completed:**
+- ✅ Writes go directly to source file descriptors (`pwrite`, `pread`); no buffering or copying
+- ✅ `create`, `mkdir`, `unlink`, `rmdir`, `rename`, `link`, `symlink`
+- ✅ `truncate`, `chmod`, `chown`, `utimens` via `setattr`
+- ✅ Concurrency: mutex-protected inode/handle maps, per-request cloned descriptors, 4 FUSE worker threads
+- ✅ Large files stream through bounded `read`/`write` requests; no whole-file buffering
+- ✅ Rename updates the inode map for moved subtrees
+- ✅ Symlink creation rejects absolute targets and `..`
+
 **Pending from M3:**
-- Write operations: forward directly to source fd (no buffering/copying)
-- `create` → `openat(source_fd, name, O_CREAT|O_EXCL, mode)` on source
-- `mkdir` → `mkdirat(source_fd, name, mode)`
-- `unlink`/`rmdir` → on source
-- `truncate` → `ftruncate` on source fd
-- `chmod`/`chown`/`utimens` → forward via `fchmodat`/`fchownat`/`futimensat`
-- Concurrency handling (FUSE is multi-threaded)
-- Large files: stream — no full-file reads into memory
-- Edge cases: rename with excluded descendants, symlink creation restrictions
+- Integration tests for write-through and concurrency
+- Rename flags (`RENAME_NOREPLACE`, `RENAME_EXCHANGE`) are ignored
+- Extended attributes are not forwarded
+- SIGTERM graceful-unmount handling
 
 **Deliverable (M3):** All tests from PRD §11.2 pass on host; modifications immediately reflected in source directory.
 
@@ -196,11 +200,10 @@ The PoC uses `bindfs` inside a container as a minimal FUSE stand-in (filtering i
 
 ## Quick Next Steps (Phase 0 done)
 
-1. **M1:** Implement the FUSE passthrough with `fuser` 0.18 and CLI exit codes; verify on host
-2. **M2:** Enforce exclusion patterns in every FUSE operation (pure Rust, no Docker needed)
-3. **M3:** Write-through and full operation support
-4. **M4:** Dockerfile + Compose using the verified `rshared`/`rslave` model from Phase 0
-5. **M5:** Security tests, failure handling, documentation
+1. **M1:** ✅ FUSE passthrough with `fuser` 0.18 and CLI exit codes; verified on host
+2. **M2/M3:** ✅ Enforcement and write-through implemented; add automated integration/security tests
+3. **M4:** Dockerfile + Compose using the verified `rshared`/`rslave` model from Phase 0
+4. **M5:** Security tests, failure handling, documentation
 
 ---
 
@@ -208,16 +211,17 @@ The PoC uses `bindfs` inside a container as a minimal FUSE stand-in (filtering i
 
 | File | Status | Notes |
 |------|--------|-------|
-| `Cargo.toml` | ✅ OK | deps: anyhow 1.0, clap 4.5, serde 1.0, globset 0.4, fuser 0.18, tokio 1.38 |
-| `src/main.rs` | ✅ OK | CLI parser with 5 subcommands |
-| `src/cli.rs` | ✅ OK | mount/healthcheck/validate/config_show/unmount functions |
-| `src/config.rs` | ✅ OK | FilesystemConfig, FilterConfig, LoggingConfig, Config with serde |
-| `src/filter.rs` | ✅ OK | GlobSet pattern matching, unit tests |
-| `src/filesystem.rs` | ✅ OK | PassthroughFileskeleton struct, FuserFile helper |
-| `src/mount.rs` | ✅ OK | MountContext, mount/healthcheck/unmount stubs |
-| `src/health.rs` | ✅ OK | HealthStatus, HealthCheckResult types |
-| `src/errors.rs` | ❌ missing | Create for error type hierarchy |
-| `src/lib.rs` | ❌ missing | Optional re-exports |
+| `Cargo.toml` | ✅ OK | deps: anyhow, clap, serde, serde_yaml, globset, fuser 0.18, libc |
+| `src/main.rs` | ✅ OK | CLI parser, exit-code dispatch |
+| `src/cli.rs` | ✅ OK | mount/healthcheck/validate/config show/unmount |
+| `src/config.rs` | ✅ OK | Config types and `Config::load` |
+| `src/filter.rs` | ✅ OK | GlobSet matching, depth and directory semantics, unit tests |
+| `src/filesystem.rs` | ✅ OK | Inode-based FUSE passthrough, all core/filter ops, unit tests |
+| `src/mount.rs` | ✅ OK | mount/unmount/is_mounted via fuser + mountinfo |
+| `src/health.rs` | ✅ OK | HealthStatus, HealthCheckResult, mount check |
+| `src/errors.rs` | ✅ OK | Exit codes and AppError |
+| `config/config.example.yaml` | ✅ OK | Example configuration |
+| `src/lib.rs` | ❌ not planned | Binary crate; unit tests are inline |
 | `Dockerfile` | ❌ missing | Create per PRD |
 | `docker-compose.yml` | ❌ missing | Create per PRD §5.1 |
 | `scripts/phase0-feasibility.sh` | ✅ OK | Phase 0 propagation PoC; passes on native Linux Docker |
@@ -229,21 +233,33 @@ The PoC uses `bindfs` inside a container as a minimal FUSE stand-in (filtering i
 ## Critical Path
 
 1. **Phase 0 PoC** on native Linux → ✅ propagation model verified
-2. **M1:** Implement FUSE ops with `fuser` crate → pass host unit tests
-3. **M2:** Enforce exclusion in every FUSE operation → pass PRD §11.1–11.2 unit tests
-4. **M3:** Write-through + concurrency → pass PRD §11.2 integration tests on host
-5. **M4:** Docker image + compose → pass AC-001..AC-014 on native Linux
-6. **M5:** Security + failure + docs → pass AC-001..AC-015
+2. **M1:** FUSE ops with `fuser` crate → ✅ implemented and manually verified on host
+3. **M2:** Exclusion enforcement in every operation → ✅ implemented; automated integration/security tests pending
+4. **M3:** Write-through + concurrency → ✅ implemented; integration tests pending
+5. **M4:** Docker image + compose → next
+6. **M5:** Security + failure + docs
 
 ---
 
 ## To Resume Later
 
-Run:
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
 cd /workspace/docker-fuse-filter
-cargo check   # verifies: 0 errors
+cargo fmt --all
+cargo clippy --locked --all-targets
+cargo test --locked
 ```
 
-Then proceed based on Phase 0 PoC result.
+Host mount smoke test (requires root and `/dev/fuse`):
+
+```bash
+mkdir -p /tmp/scrim-src /tmp/scrim-mnt
+sudo target/debug/docker-fuse-filter mount --source /tmp/scrim-src \
+  --mountpoint /tmp/scrim-mnt --config config/config.example.yaml
+sudo target/debug/docker-fuse-filter healthcheck --mountpoint /tmp/scrim-mnt
+sudo target/debug/docker-fuse-filter unmount --mountpoint /tmp/scrim-mnt
+```
+
+Next: add automated integration/security tests (M2/M5), then the Dockerfile,
+Compose file, and mount setup/cleanup scripts (M4).

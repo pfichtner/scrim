@@ -1,5 +1,6 @@
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FilesystemConfig {
@@ -34,6 +35,15 @@ pub struct Config {
     pub filter: FilterConfig,
     #[serde(default)]
     pub logging: LoggingConfig,
+}
+
+impl Config {
+    pub fn load(path: &Path) -> Result<Self> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read config file {}", path.display()))?;
+        serde_yaml::from_str(&text)
+            .with_context(|| format!("failed to parse config file {}", path.display()))
+    }
 }
 
 fn default_true() -> bool {

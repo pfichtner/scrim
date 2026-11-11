@@ -1,13 +1,9 @@
-use std::path::PathBuf;
+use std::path::Path;
 
-/// Health check result
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HealthStatus {
-    /// FUSE mount is healthy and operational
     Healthy,
-    /// FUSE mount is not running or has errored
     Unhealthy,
-    /// Mountpoint does not exist
     NotFound,
 }
 
@@ -40,16 +36,23 @@ impl HealthCheckResult {
     }
 }
 
-/// Perform a health check on the FUSE mount
-pub async fn health_check(mountpoint: PathBuf) -> anyhow::Result<HealthCheckResult> {
+pub fn health_check(mountpoint: &Path) -> HealthCheckResult {
     if !mountpoint.exists() {
-        return Ok(HealthCheckResult::not_found());
+        return HealthCheckResult::not_found();
     }
-
-    // Check if the FUSE filesystem is accessible
-    // This will be expanded to actually check the FUSE device
-
-    Ok(HealthCheckResult::healthy())
+    if !crate::mount::is_mounted(mountpoint) {
+        return HealthCheckResult::unhealthy(format!(
+            "{} is not a mounted filesystem",
+            mountpoint.display()
+        ));
+    }
+    match std::fs::read_dir(mountpoint) {
+        Ok(_) => HealthCheckResult::healthy(),
+        Err(error) => HealthCheckResult::unhealthy(format!(
+            "filesystem at {} is not readable: {error}",
+            mountpoint.display()
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -71,6 +74,12 @@ mod tests {
     #[test]
     fn test_not_found_status() {
         let result = HealthCheckResult::not_found();
+        assert_eq!(result.status, HealthStatus::NotFound);
+    }
+
+    #[test]
+    fn missing_mountpoint_is_not_found() {
+        let result = health_check(Path::new("/nonexistent/scrim"));
         assert_eq!(result.status, HealthStatus::NotFound);
     }
 }

@@ -1,83 +1,38 @@
-use anyhow::Result;
+use std::process::ExitCode;
+
 use clap::Parser;
-use std::path::PathBuf;
 
 mod cli;
 mod config;
+mod errors;
 mod filesystem;
 mod filter;
 mod health;
 mod mount;
 
-#[derive(Parser)]
-#[command(name = "fuse-filter")]
-#[command(about = "Docker FUSE Filter - writable, filtered bind mounts")]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(clap::Subcommand)]
-enum Commands {
-    Mount {
-        #[arg(long)]
-        source: PathBuf,
-
-        #[arg(long)]
-        mountpoint: PathBuf,
-
-        #[arg(long)]
-        config: PathBuf,
-    },
-
-    Healthcheck {
-        #[arg(long)]
-        mountpoint: PathBuf,
-    },
-
-    Validate {
-        #[arg(long)]
-        config: PathBuf,
-    },
-
-    ConfigShow {
-        #[arg(long)]
-        config: PathBuf,
-    },
-
-    Unmount {
-        #[arg(long)]
-        mountpoint: PathBuf,
-    },
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> ExitCode {
     tracing_subscriber::fmt::init();
 
-    let cli = Cli::parse();
-
-    match cli.command {
-        Commands::Mount {
+    let cli = cli::Cli::parse();
+    let result = match cli.command {
+        cli::Commands::Mount {
             source,
             mountpoint,
             config,
-        } => {
-            cli::mount(source, mountpoint, config).await?;
-        }
-        Commands::Healthcheck { mountpoint } => {
-            cli::healthcheck(mountpoint).await?;
-        }
-        Commands::Validate { config } => {
-            cli::validate(config).await?;
-        }
-        Commands::ConfigShow { config } => {
-            cli::config_show(config).await?;
-        }
-        Commands::Unmount { mountpoint } => {
-            cli::unmount(mountpoint).await?;
+        } => cli::mount(source, mountpoint, config),
+        cli::Commands::Healthcheck { mountpoint, config } => cli::healthcheck(mountpoint, config),
+        cli::Commands::Validate { config } => cli::validate(config),
+        cli::Commands::Config { action } => match action {
+            cli::ConfigAction::Show { config } => cli::config_show(config),
+        },
+        cli::Commands::Unmount { mountpoint } => cli::unmount(mountpoint),
+    };
+
+    match result {
+        Ok(()) => ExitCode::from(errors::EXIT_SUCCESS),
+        Err(error) => {
+            eprintln!("error: {error}");
+            ExitCode::from(error.code)
         }
     }
-
-    Ok(())
 }
