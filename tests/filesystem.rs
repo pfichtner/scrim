@@ -207,3 +207,39 @@ fn guessed_filename_access_denied() {
         io::ErrorKind::NotFound
     );
 }
+
+#[test]
+#[ignore = "requires /dev/fuse and root"]
+fn rename_excluded_to_visible_rejected() {
+    require_mount();
+    let m = Mounted::new(vec![".env"], false);
+    fs::write(m.src(".env"), "SECRET").unwrap();
+    let err = fs::rename(m.p(".env"), m.p("visible.txt")).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    assert_eq!(fs::read_to_string(m.src(".env")).unwrap(), "SECRET");
+    assert!(!m.src("visible.txt").exists());
+}
+
+#[test]
+#[ignore = "requires /dev/fuse and root"]
+fn hard_link_to_excluded_destination_rejected() {
+    require_mount();
+    let m = Mounted::new(vec![".env"], false);
+    fs::write(m.src("visible.txt"), "ok").unwrap();
+    let err = fs::hard_link(m.p("visible.txt"), m.p(".env")).unwrap_err();
+    assert!(
+        err.kind() == io::ErrorKind::PermissionDenied || err.raw_os_error() == Some(libc::EACCES)
+    );
+    assert!(!m.src(".env").exists());
+}
+
+#[test]
+#[ignore = "requires /dev/fuse and root"]
+fn hard_link_visible_file_succeeds() {
+    require_mount();
+    let m = Mounted::new(vec![".env"], false);
+    fs::write(m.src("a.txt"), "ok").unwrap();
+    fs::hard_link(m.p("a.txt"), m.p("b.txt")).unwrap();
+    assert_eq!(fs::read_to_string(m.src("b.txt")).unwrap(), "ok");
+    assert_eq!(fs::read_to_string(m.p("b.txt")).unwrap(), "ok");
+}
