@@ -703,3 +703,10 @@ config/                    example configuration
 ## License
 
 No license has been chosen yet.
+
+## Testing
+
+- Unit tests: `cargo test --locked` (or `cargo test` without a lockfile in dev).
+- FUSE integration/security tests require `/dev/fuse` and root on a native Linux host: `sudo cargo test --test filesystem -- --ignored` (uses the in-repo `scrim` crate via a spawned FUSE mount).
+- Docker end-to-end: `sudo ./scripts/integration-test.sh` (rootful Docker, native Linux; covers AC-001..AC-014).
+- CI runs `cargo fmt --check`, `cargo build --locked --all-targets`, `cargo clippy --locked --all-targets`, `cargo test --locked`.
