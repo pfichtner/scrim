@@ -1,10 +1,12 @@
 use std::path::PathBuf;
+use std::sync::Once;
 
 use crate::config::Config;
 use crate::errors::{AppError, Result};
 use crate::filter::Filter;
 
 const DEFAULT_CONFIG: &str = "/etc/scrim/config.yaml";
+static LOG_INIT: Once = Once::new();
 
 #[derive(Debug, clap::Parser)]
 #[command(name = "scrim")]
@@ -17,26 +19,26 @@ pub struct Cli {
 #[derive(Debug, clap::Subcommand)]
 pub enum Commands {
     Mount {
-        #[arg(long)]
+        #[arg(long, env = "SCRIM_SOURCE")]
         source: PathBuf,
 
-        #[arg(long)]
+        #[arg(long, env = "SCRIM_MOUNTPOINT")]
         mountpoint: PathBuf,
 
-        #[arg(long, default_value = DEFAULT_CONFIG)]
+        #[arg(long, env = "SCRIM_CONFIG", default_value = DEFAULT_CONFIG)]
         config: PathBuf,
     },
 
     Healthcheck {
-        #[arg(long)]
+        #[arg(long, env = "SCRIM_MOUNTPOINT")]
         mountpoint: Option<PathBuf>,
 
-        #[arg(long)]
+        #[arg(long, env = "SCRIM_CONFIG")]
         config: Option<PathBuf>,
     },
 
     Validate {
-        #[arg(long, default_value = DEFAULT_CONFIG)]
+        #[arg(long, env = "SCRIM_CONFIG", default_value = DEFAULT_CONFIG)]
         config: PathBuf,
     },
 
@@ -46,7 +48,7 @@ pub enum Commands {
     },
 
     Unmount {
-        #[arg(long)]
+        #[arg(long, env = "SCRIM_MOUNTPOINT")]
         mountpoint: PathBuf,
     },
 }
@@ -54,13 +56,17 @@ pub enum Commands {
 #[derive(Debug, clap::Subcommand)]
 pub enum ConfigAction {
     Show {
-        #[arg(long, default_value = DEFAULT_CONFIG)]
+        #[arg(long, env = "SCRIM_CONFIG", default_value = DEFAULT_CONFIG)]
         config: PathBuf,
     },
 }
 
 pub fn mount(source: PathBuf, mountpoint: PathBuf, config_path: PathBuf) -> Result<()> {
     let config = load_config(&config_path)?;
+    init_logging(&config.logging.level);
+    if !config.filter.hide_excluded_files {
+        tracing::warn!("hide_excluded_files=false is not supported; excluded paths will still be hidden");
+    }
     let filter = build_filter(&config)?;
 
     crate::mount::mount(crate::mount::MountContext {
@@ -74,6 +80,7 @@ pub fn mount(source: PathBuf, mountpoint: PathBuf, config_path: PathBuf) -> Resu
 }
 
 pub fn healthcheck(mountpoint: Option<PathBuf>, config_path: Option<PathBuf>) -> Result<()> {
+    init_logging("info");
     let mountpoint = match mountpoint {
         Some(mountpoint) => mountpoint,
         None => {
@@ -94,6 +101,7 @@ pub fn healthcheck(mountpoint: Option<PathBuf>, config_path: Option<PathBuf>) ->
 }
 
 pub fn validate(config_path: PathBuf) -> Result<()> {
+    init_logging("info");
     let config = load_config(&config_path)?;
     build_filter(&config)?;
     println!("Configuration is valid: {}", config_path.display());
@@ -101,6 +109,7 @@ pub fn validate(config_path: PathBuf) -> Result<()> {
 }
 
 pub fn config_show(config_path: PathBuf) -> Result<()> {
+    init_logging("info");
     let config = load_config(&config_path)?;
     let yaml = serde_yaml::to_string(&config)
         .map_err(|error| AppError::config(format!("failed to render configuration: {error}")))?;
@@ -109,7 +118,16 @@ pub fn config_show(config_path: PathBuf) -> Result<()> {
 }
 
 pub fn unmount(mountpoint: PathBuf) -> Result<()> {
+    init_logging("info");
     crate::mount::unmount(&mountpoint)
+}
+
+fn init_logging(level: &str) {
+    LOG_INIT.call_once(|| {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(level));
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    });
 }
 
 fn load_config(path: &std::path::Path) -> Result<Config> {

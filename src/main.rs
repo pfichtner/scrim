@@ -3,8 +3,6 @@ use std::process::ExitCode;
 use clap::Parser;
 
 fn main() -> ExitCode {
-    tracing_subscriber::fmt::init();
-
     let cli = scrim::cli::Cli::parse();
     let result = match cli.command {
         scrim::cli::Commands::Mount {
