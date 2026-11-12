@@ -2,6 +2,7 @@ use scrim::filter::Filter;
 use scrim::mount::{self, MountContext};
 use std::fs;
 use std::io;
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -157,4 +158,52 @@ fn mkdir_rmdir_visible() {
     assert!(m.src("subdir").is_dir());
     fs::remove_dir(m.p("subdir")).unwrap();
     assert!(!m.src("subdir").exists());
+}
+
+#[test]
+#[ignore = "requires /dev/fuse and root"]
+fn symlink_to_excluded_is_not_exposed() {
+    require_mount();
+    let m = Mounted::new(vec![".env"], true);
+    fs::write(m.src(".env"), "SECRET").unwrap();
+    fs::write(m.src("visible.txt"), "ok").unwrap();
+    symlink(".env", m.src("config.json")).unwrap();
+
+    let err = fs::read(m.p("config.json")).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    assert!(!fs::read_dir(&m.mountpoint)
+        .unwrap()
+        .any(|e| e.unwrap().file_name() == "config.json"));
+    assert_eq!(fs::read_to_string(m.p("visible.txt")).unwrap(), "ok");
+}
+
+#[test]
+#[ignore = "requires /dev/fuse and root"]
+fn symlink_escaping_source_is_not_exposed() {
+    require_mount();
+    let m = Mounted::new(Vec::<&str>::new(), true);
+    let outside = tempfile::tempdir().unwrap();
+    let outside_file = outside.path().join("secret.txt");
+    fs::write(&outside_file, "SECRET").unwrap();
+    symlink(&outside_file, m.src("escape")).unwrap();
+
+    let err = fs::read(m.p("escape")).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::NotFound);
+}
+
+#[test]
+#[ignore = "requires /dev/fuse and root"]
+fn guessed_filename_access_denied() {
+    require_mount();
+    let m = Mounted::new(vec![".env", "private.key"], false);
+    fs::write(m.src(".env"), "SECRET").unwrap();
+    fs::write(m.src("private.key"), "SECRET").unwrap();
+    assert_eq!(
+        fs::read(m.p(".env")).unwrap_err().kind(),
+        io::ErrorKind::NotFound
+    );
+    assert_eq!(
+        fs::File::open(m.p("private.key")).unwrap_err().kind(),
+        io::ErrorKind::NotFound
+    );
 }

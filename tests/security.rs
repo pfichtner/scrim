@@ -31,3 +31,18 @@ fn nested_secret_paths_are_excluded() {
     assert!(filter.is_excluded(Path::new("app/secrets/token")));
     assert!(filter.is_parent_excluded(Path::new("app/secrets/deep/token")));
 }
+
+#[test]
+fn dotdot_inside_path_component_still_matches_normal_patterns() {
+    // Path resolution/canonicalization is the filesystem's responsibility; the
+    // matcher operates on relative path strings as provided.
+    let filter = Filter::new(vec![".env".to_string()], true).unwrap();
+    assert!(filter.is_excluded(Path::new("config/.env")));
+}
+
+#[test]
+fn recursive_glob_does_not_expose_visible_siblings() {
+    let filter = Filter::new(vec!["**/secrets/**".to_string()], true).unwrap();
+    assert!(!filter.is_excluded(Path::new("config/database.json")));
+    assert!(!filter.is_excluded(Path::new("secrets-public/readme.txt")));
+}
