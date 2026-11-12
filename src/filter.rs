@@ -26,12 +26,18 @@ impl Filter {
 
             if pattern.contains('/') {
                 expanded.push(pattern.to_string());
-                if is_dir {
+                if is_dir || pattern.ends_with("/**") {
                     expanded.push(format!("{pattern}/**"));
+                }
+                if pattern.ends_with("/**") {
+                    expanded.push(pattern.trim_end_matches("/**").to_string());
                 }
                 // Also match the pattern relative to the source root.
                 if let Some(rest) = pattern.strip_prefix("**/") {
                     expanded.push(rest.to_string());
+                    if rest.ends_with("/**") {
+                        expanded.push(rest.trim_end_matches("/**").to_string());
+                    }
                 }
             } else {
                 // A bare name matches at the root and at any depth.
@@ -108,6 +114,7 @@ mod tests {
         assert!(filter.is_excluded(Path::new("config/secrets/credentials.json")));
         assert!(filter.is_excluded(Path::new("app/secrets/key.pem")));
         assert!(filter.is_excluded(Path::new("secrets/key.pem")));
+        assert!(filter.is_excluded(Path::new("config/secrets")));
         assert!(!filter.is_excluded(Path::new("config/database.json")));
     }
 
