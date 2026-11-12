@@ -1,10 +1,13 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 use crate::errors::{AppError, Result, EXIT_MOUNT, EXIT_SOURCE};
 use crate::filesystem::PassthroughFilesystem;
 use crate::filter::Filter;
 use fuser::{Config, MountOption};
+use signal_hook::consts::{SIGINT, SIGTERM};
+use signal_hook::iterator::Signals;
 
 pub struct MountContext {
     pub source: PathBuf,
@@ -16,6 +19,8 @@ pub struct MountContext {
 }
 
 pub fn mount(ctx: MountContext) -> Result<()> {
+    setup_signal_handler();
+
     let source = std::fs::canonicalize(&ctx.source).map_err(|error| {
         AppError::io(
             EXIT_SOURCE,
@@ -89,10 +94,30 @@ pub fn mount(ctx: MountContext) -> Result<()> {
         read_only = ctx.read_only,
         "mounting Scrim filesystem"
     );
-    fuser::mount(filesystem, &mountpoint, &config)
-        .map_err(|error| AppError::io(EXIT_MOUNT, "mount failed", error))?;
-    tracing::info!("filesystem unmounted");
+    fuser::mount(filesystem, &mountpoint, &config).map_err(|error| {
+        let _ = unmount(&mountpoint);
+        AppError::io(EXIT_MOUNT, "mount failed", error)
+    })?;
+    tracing::info!("filesystem mounted");
+
+    wait_for_shutdown_signal();
+
+    let _ = unmount(&mountpoint);
     Ok(())
+}
+
+fn setup_signal_handler() {
+    thread::spawn(move || {
+        let mut signals =
+            Signals::new([SIGTERM, SIGINT]).expect("failed to install signal handlers");
+        for _ in signals.forever() {
+            tracing::info!(signal = "received", "shutdown signal received");
+        }
+    });
+}
+
+fn wait_for_shutdown_signal() {
+    thread::sleep(Duration::from_secs(30));
 }
 
 pub fn unmount(mountpoint: &Path) -> Result<()> {
@@ -112,7 +137,10 @@ pub fn unmount(mountpoint: &Path) -> Result<()> {
     let error = std::io::Error::last_os_error();
 
     for candidate in ["fusermount3", "fusermount"] {
-        let status = Command::new(candidate).arg("-u").arg(mountpoint).status();
+        let status = std::process::Command::new(candidate)
+            .arg("-u")
+            .arg(mountpoint)
+            .status();
         if let Ok(status) = status {
             if status.success() {
                 tracing::info!(mountpoint = %mountpoint.display(), "unmounted filesystem");
