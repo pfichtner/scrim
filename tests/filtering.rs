@@ -95,11 +95,7 @@ fn case_sensitive_by_default() {
 
 #[test]
 fn visible_paths_not_excluded() {
-    let filter = Filter::new(
-        vec![".env".to_string(), "**/secrets/**".to_string()],
-        true,
-    )
-    .unwrap();
+    let filter = Filter::new(vec![".env".to_string(), "**/secrets/**".to_string()], true).unwrap();
     for path in ["app.py", "config/database.json", "README.md", "src/main.rs"] {
         assert!(
             !filter.is_excluded(Path::new(path)),

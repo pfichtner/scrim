@@ -65,7 +65,9 @@ pub fn mount(source: PathBuf, mountpoint: PathBuf, config_path: PathBuf) -> Resu
     let config = load_config(&config_path)?;
     init_logging(&config.logging.level);
     if !config.filter.hide_excluded_files {
-        tracing::warn!("hide_excluded_files=false is not supported; excluded paths will still be hidden");
+        tracing::warn!(
+            "hide_excluded_files=false is not supported; excluded paths will still be hidden"
+        );
     }
     let filter = build_filter(&config)?;
 

@@ -4,7 +4,11 @@ use std::path::Path;
 #[test]
 fn excluded_secret_not_matched_as_visible() {
     let filter = Filter::new(
-        vec![".env".to_string(), ".env.*".to_string(), "*.key".to_string()],
+        vec![
+            ".env".to_string(),
+            ".env.*".to_string(),
+            "*.key".to_string(),
+        ],
         true,
     )
     .unwrap();
